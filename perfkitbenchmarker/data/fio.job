@@ -62,3 +62,12 @@ blocksize=4k
 iodepth=64
 size=10*1000*$mb_memory
 direct=1
+
+[random_write_test_parallel]
+invalidate=1
+stonewall
+rw=randwrite
+blocksize=4k
+iodepth=64
+size=10*1000*$mb_memory
+direct=1

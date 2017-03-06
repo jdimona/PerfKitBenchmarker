@@ -462,9 +462,16 @@ class SideBySideJSONPublisher(SamplePublisher):
     logging.info('Publishing %d samples to %s', len(samples),
                  self.file_path)
     with open(self.file_path, self.mode) as fp:
+      formattedSamples = []
+      for sample in samples:
+        sample = sample.copy()
+        if self.collapse_labels:
+          sample['labels'] = GetLabelsFromDict(sample.pop('metadata', {}))
+        formattedSamples.append(sample)
+
       output = {
         'flags': flags,
-        'samples': samples
+        'samples': formattedSamples
       }
       fp.write(json.dumps(output, indent=4, separators=(',', ': ')) + '\n')
 
@@ -703,8 +710,9 @@ class SampleCollector(object):
     publishers.append(NewlineDelimitedJSONPublisher(
         FLAGS.json_path or default_json_path,
         collapse_labels=FLAGS.collapse_labels))
+    default_sidebyside_json_path = vm_util.PrependTempDir(DEFAULT_SIDEBYSIDE_JSON_OUTPUT_NAME)
     publishers.append(SideBySideJSONPublisher(
-        DEFAULT_SIDEBYSIDE_JSON_OUTPUT_NAME,
+        default_sidebyside_json_path,
         collapse_labels=FLAGS.collapse_labels))
 
     return publishers
