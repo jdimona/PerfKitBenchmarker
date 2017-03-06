@@ -107,6 +107,7 @@ flags.DEFINE_multistring(
     'by separating each pair by commas.')
 
 DEFAULT_JSON_OUTPUT_NAME = 'perfkitbenchmarker_results.json'
+DEFAULT_SIDEBYSIDE_JSON_OUTPUT_NAME = 'perfkitbenchmarker_sidebyside_results.json'
 DEFAULT_CREDENTIALS_JSON = 'credentials.json'
 GCS_OBJECT_NAME_LENGTH = 20
 
@@ -218,7 +219,7 @@ class SamplePublisher(object):
   __metaclass__ = abc.ABCMeta
 
   @abc.abstractmethod
-  def PublishSamples(self, samples):
+  def PublishSamples(self, samples, flags):
     """Publishes 'samples'.
 
     PublishSamples will be called exactly once. Calling
@@ -246,7 +247,7 @@ class CSVPublisher(SamplePublisher):
   def __init__(self, path):
     self._path = path
 
-  def PublishSamples(self, samples):
+  def PublishSamples(self, samples, flags):
     samples = list(samples)
     # Union of all metadata keys.
     meta_keys = sorted(
@@ -328,7 +329,7 @@ class PrettyPrintStreamPublisher(SamplePublisher):
     return ' '.join('{0}="{1}"'.format(k, v)
                     for k, v in sorted(metadata.iteritems()))
 
-  def PublishSamples(self, samples):
+  def PublishSamples(self, samples, flags):
     # result will store the formatted text, then be emitted to self.stream and
     # logged.
     result = io.BytesIO()
@@ -402,7 +403,7 @@ class LogPublisher(SamplePublisher):
     return '<{0} logger={1} level={2}>'.format(type(self).__name__, self.logger,
                                                self.level)
 
-  def PublishSamples(self, samples):
+  def PublishSamples(self, samples, flags):
     data = [
         '\n' + '-' * 25 + 'PerfKitBenchmarker Complete Results' + '-' * 25 +
         '\n']
@@ -436,7 +437,7 @@ class NewlineDelimitedJSONPublisher(SamplePublisher):
     return '<{0} file_path="{1}" mode="{2}">'.format(
         type(self).__name__, self.file_path, self.mode)
 
-  def PublishSamples(self, samples):
+  def PublishSamples(self, samples, flags):
     logging.info('Publishing %d samples to %s', len(samples),
                  self.file_path)
     with open(self.file_path, self.mode) as fp:
@@ -445,6 +446,27 @@ class NewlineDelimitedJSONPublisher(SamplePublisher):
         if self.collapse_labels:
           sample['labels'] = GetLabelsFromDict(sample.pop('metadata', {}))
         fp.write(json.dumps(sample) + '\n')
+
+
+class SideBySideJSONPublisher(SamplePublisher):
+  def __init__(self, file_path, mode='wb', collapse_labels=True):
+    self.file_path = file_path
+    self.mode = mode
+    self.collapse_labels = collapse_labels
+
+  def __repr__(self):
+    return '<{0} file_path="{1}" mode="{2}">'.format(
+      type(self).__name__, self.file_path, self.mode)
+
+  def PublishSamples(self, samples, flags):
+    logging.info('Publishing %d samples to %s', len(samples),
+                 self.file_path)
+    with open(self.file_path, self.mode) as fp:
+      output = {
+        'flags': flags,
+        'samples': samples
+      }
+      fp.write(json.dumps(output, indent=4, separators=(',', ': ')) + '\n')
 
 
 class BigQueryPublisher(SamplePublisher):
@@ -478,7 +500,7 @@ class BigQueryPublisher(SamplePublisher):
   def __repr__(self):
     return '<{0} table="{1}">'.format(type(self).__name__, self.bigquery_table)
 
-  def PublishSamples(self, samples):
+  def PublishSamples(self, samples, flags):
     if not samples:
       logging.warn('No samples: not publishing to BigQuery')
       return
@@ -488,7 +510,7 @@ class BigQueryPublisher(SamplePublisher):
                                     suffix='.json') as tf:
       json_publisher = NewlineDelimitedJSONPublisher(tf.name,
                                                      collapse_labels=True)
-      json_publisher.PublishSamples(samples)
+      json_publisher.PublishSamples(samples, flags)
       tf.close()
       logging.info('Publishing %d samples to %s', len(samples),
                    self.bigquery_table)
@@ -536,12 +558,12 @@ class CloudStoragePublisher(SamplePublisher):
       object_name = str(int(time.time() * 100)) + '_' + str(uuid.uuid4())
       return object_name[:GCS_OBJECT_NAME_LENGTH]
 
-  def PublishSamples(self, samples):
+  def PublishSamples(self, samples, flags):
     with vm_util.NamedTemporaryFile(prefix='perfkit-gcs-pub',
                                     dir=vm_util.GetTempDir(),
                                     suffix='.json') as tf:
       json_publisher = NewlineDelimitedJSONPublisher(tf.name)
-      json_publisher.PublishSamples(samples)
+      json_publisher.PublishSamples(samples, flags)
       tf.close()
       object_name = self._GenerateObjectName()
       storage_uri = 'gs://{0}/{1}'.format(self.bucket, object_name)
@@ -594,7 +616,7 @@ class ElasticsearchPublisher(SamplePublisher):
         }
     }
 
-  def PublishSamples(self, samples):
+  def PublishSamples(self, samples, flags):
     """Publish samples to Elasticsearch service"""
     try:
       from elasticsearch import Elasticsearch
@@ -659,6 +681,7 @@ class SampleCollector(object):
   """
   def __init__(self, metadata_providers=None, publishers=None):
     self.samples = []
+    self.flags = []
 
     if metadata_providers is not None:
       self.metadata_providers = metadata_providers
@@ -680,6 +703,21 @@ class SampleCollector(object):
     publishers.append(NewlineDelimitedJSONPublisher(
         FLAGS.json_path or default_json_path,
         collapse_labels=FLAGS.collapse_labels))
+    publishers.append(SideBySideJSONPublisher(
+        DEFAULT_SIDEBYSIDE_JSON_OUTPUT_NAME,
+        collapse_labels=FLAGS.collapse_labels))
+
+    return publishers
+
+  @classmethod
+  def _PublishersFromFlags(cls):
+    publishers = []
+
+    if FLAGS.json_path:
+      publishers.append(NewlineDelimitedJSONPublisher(
+          FLAGS.json_path,
+          mode=FLAGS.json_write_mode,
+          collapse_labels=FLAGS.collapse_labels))
     if FLAGS.bigquery_table:
       publishers.append(BigQueryPublisher(
           FLAGS.bigquery_table,
@@ -728,5 +766,5 @@ class SampleCollector(object):
   def PublishSamples(self):
     """Publish samples via all registered publishers."""
     for publisher in self.publishers:
-      publisher.PublishSamples(self.samples)
+      publisher.PublishSamples(self.samples, self.flags)
     self.samples = []

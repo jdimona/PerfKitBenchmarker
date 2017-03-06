@@ -343,6 +343,8 @@ def main():
                  help="""HTML report title""")
   p.add_argument('--base', default='master', help="""Base revision.""")
   p.add_argument('--head', default='dev', help="""Head revision.""")
+  p.add_argument('--head-name', default='head')
+  p.add_argument('--base-name', default='base')
   p.add_argument('--base-flags', default=None, help="""Flags for run against
                  '--base' revision. Will be combined with --flags.""",
                  type=shlex.split)
@@ -356,6 +358,8 @@ def main():
                  help="""Run concurrently""")
   p.add_argument('--rerender', help="""Re-render the HTML report from a JSON
                  file [for developers].""", action='store_true')
+  p.add_argument('--base-json', default=None)
+  p.add_argument('--head-json', default=None)
   p.add_argument('json_output', help="""JSON output path.""")
   p.add_argument('html_output', help="""HTML output path.""")
   a = p.parse_args()
@@ -400,10 +404,20 @@ def main():
       json_fp.write('\n')
   else:
     logging.info('Loading results from %s', a.json_output)
-    with argparse.FileType('r')(a.json_output) as json_fp:
-      d = json.load(json_fp)
-      base_res = PerfKitBenchmarkerResult(**d['base'])
-      head_res = PerfKitBenchmarkerResult(**d['head'])
+    with argparse.FileType('r')(a.base_json) as base_json_fp:
+      base_json = json.load(base_json_fp)
+      base_json["name"] = a.base_name
+      base_json["description"] = ""
+      base_json["sha1"] = ""
+
+    with argparse.FileType('r')(a.head_json) as head_json_fp:
+      head_json = json.load(head_json_fp)
+      head_json["name"] = a.head_name
+      head_json["description"] = ""
+      head_json["sha1"] = ""
+
+    base_res = PerfKitBenchmarkerResult(**base_json)
+    head_res = PerfKitBenchmarkerResult(**head_json)
 
   with argparse.FileType('w')(a.html_output) as html_fp:
     logging.info('Writing HTML to %s', a.html_output)

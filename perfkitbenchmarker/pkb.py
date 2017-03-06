@@ -557,12 +557,16 @@ def RunBenchmarkTask(spec):
 
 
 def _LogCommandLineFlags():
+  logging.info('Flag values:\n%s', '\n'.join(_GetCommandLineFlagsList()))
+
+
+def _GetCommandLineFlagsList():
   result = []
   for name in FLAGS:
     flag = FLAGS[name]
     if flag.present:
       result.append(flag.Serialize())
-  logging.info('Flag values:\n%s', '\n'.join(result))
+  return result
 
 
 def SetUpPKB():
@@ -625,6 +629,7 @@ def RunBenchmarks():
   """
   benchmark_specs = _CreateBenchmarkSpecs()
   collector = SampleCollector()
+  collector.flags = _GetCommandLineFlagsList()
 
   try:
     tasks = [(RunBenchmarkTask, (spec,), {})
